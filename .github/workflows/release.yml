@@ -3,6 +3,7 @@ name: Release NPM package
 on:
   push:
     tags: ['v*']
+    tags-ignore: ['v*-de.*']   # fork prereleases are tarball releases, not npm
 
 permissions:
   id-token: write  # Required for OIDC

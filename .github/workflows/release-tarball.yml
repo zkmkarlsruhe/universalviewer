@@ -1,0 +1,50 @@
+name: Release fork tarball
+
+on:
+  push:
+    tags: ['v*-de.*']
+
+permissions:
+  contents: write  # gh release create
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    name: Pack and release tarball
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - run: npm ci
+
+      # `npm pack` runs prepublishOnly automatically → build-all → fresh dist/
+      - name: Pack tarball
+        run: npm pack
+
+      - name: Get tag
+        id: tagName
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release with tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tagName.outputs.tag }}
+        run: |
+          pkg=$(ls universalviewer-*.tgz | head -1)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — skipping (delete the release and re-push the tag to rebuild)."
+          else
+            gh release create "$TAG" "$pkg" \
+              --title "$TAG" \
+              --notes "Fork release for zkm-data-portal (Option B1 tarball). Download: .../releases/download/$TAG/$pkg"
+          fi
