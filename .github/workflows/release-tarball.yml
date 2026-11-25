@@ -5,7 +5,7 @@ on:
     tags: ['v*-de.*']
 
 permissions:
-  contents: write  # gh release create
+  contents: write  # gh release create / upload
 
 jobs:
   pack:
@@ -27,22 +27,44 @@ jobs:
 
       - run: npm ci
 
-      # `npm pack` runs prepublishOnly automatically → build-all → fresh dist/
+      # Do not rely on prepublishOnly: `npm pack` does not reliably run it here,
+      # and dist/ is gitignored (never in the source tree). An unbuilt dist then
+      # produces a boilerplate-only tarball (~5 kB, no dist/) — exactly the 5346-byte
+      # artifact that broke the first release. Build explicitly, then pack with
+      # scripts ignored so we ship exactly what was built.
+      - name: Build release artifacts
+        run: npm run build-all
+
       - name: Pack tarball
-        run: npm pack
+        run: npm pack --ignore-scripts
+
+      - name: Sanity-check tarball (dist/, de-DE, size)
+        run: |
+          pkg=$(ls universalviewer-*.tgz | head -1)
+          size=$(stat -c%s "$pkg")
+          echo "tarball: $pkg ($size bytes)"
+          [ "$size" -gt 1000000 ] || { echo "ERROR: tarball suspiciously small ($size bytes)"; exit 1; }
+          tar -tzf "$pkg" | grep -q 'package/dist/esm/index.css' \
+            || { echo "ERROR: dist/esm/index.css missing"; exit 1; }
+          tar -tzf "$pkg" | grep -q 'package/dist/esm/de-DE' \
+            || { echo "ERROR: de-DE ESM chunk missing"; exit 1; }
+          tar -tzf "$pkg" | grep -q 'package/dist/cjs/locales/de-DE.json' \
+            || { echo "ERROR: de-DE CJS locale missing"; exit 1; }
+          echo "OK: dist/ and de-DE present"
 
       - name: Get tag
         id: tagName
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub release with tarball
+      - name: Create or update GitHub release with tarball
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tagName.outputs.tag }}
         run: |
           pkg=$(ls universalviewer-*.tgz | head -1)
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists — skipping (delete the release and re-push the tag to rebuild)."
+            echo "Release $TAG exists — replacing tarball asset."
+            gh release upload "$TAG" "$pkg" --clobber
           else
             gh release create "$TAG" "$pkg" \
               --title "$TAG" \
